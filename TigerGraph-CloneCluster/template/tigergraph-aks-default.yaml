@@ -1,0 +1,418 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tigergraph-installer
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: modify-pods
+  namespace: default
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: modify-pods
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: modify-pods
+subjects:
+- kind: ServiceAccount
+  name: tigergraph-installer
+  namespace: default
+---
+apiVersion: v1
+data:
+  cluster_size: "4"
+  ha: "2"
+  license: ""
+  namespace: default
+  pod.prefix: tigergraph
+  service.headless.name: tigergraph
+kind: ConfigMap
+metadata:
+  labels:
+    app: tigergraph
+  name: env-config
+  namespace: default
+---
+apiVersion: v1
+data:
+  init_tg_cfg: |
+    System.HostList=[{"ID":"m1","Hostname":"tigergraph-0.tigergraph","Region":""},{"ID":"m2","Hostname":"tigergraph-1.tigergraph","Region":""},{"ID":"m3","Hostname":"tigergraph-2.tigergraph","Region":""},{"ID":"m4","Hostname":"tigergraph-3.tigergraph","Region":""}]
+    System.SSH.User.Username=tigergraph
+    System.SSH.User.Password=tigergraph
+    System.SSH.User.Privatekey=/home/tigergraph/.ssh/tigergraph_rsa
+    System.DataRoot=/home/tigergraph/tigergraph/data
+    System.LogRoot=/home/tigergraph/tigergraph/log
+    System.TempRoot=/home/tigergraph/tigergraph/tmp
+kind: ConfigMap
+metadata:
+  labels:
+    app: tigergraph
+  name: tg-config
+  namespace: default
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: tigergraph
+  name: tg-gui-service
+  namespace: default
+spec:
+  ports:
+  - name: graphstudio
+    port: 14240
+    targetPort: 14240
+  selector:
+    app: tigergraph
+    guiserver: running
+  sessionAffinity: ClientIP
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: tigergraph
+  name: tg-rest-service
+  namespace: default
+spec:
+  ports:
+  - name: rest
+    port: 9000
+    targetPort: 9000
+  selector:
+    app: tigergraph
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: tigergraph
+  name: tigergraph
+  namespace: default
+spec:
+  clusterIP: None
+  ports:
+  - name: rest
+    port: 9000
+    targetPort: 9000
+  - name: graphstudio
+    port: 14240
+    targetPort: 14240
+  selector:
+    app: tigergraph
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: tigergraph
+  name: tigergraph
+  namespace: default
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: tigergraph
+  serviceName: tigergraph
+  template:
+    metadata:
+      labels:
+        app: tigergraph
+    spec:
+      containers:
+      - env:
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              key: service.headless.name
+              name: env-config
+        - name: POD_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              key: pod.prefix
+              name: env-config
+        - name: NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              key: namespace
+              name: env-config
+        - name: CLUSTER_SIZE
+          valueFrom:
+            configMapKeyRef:
+              key: cluster_size
+              name: env-config
+        image: docker.tigergraph.com/tigergraph-k8s:3.5.0
+        imagePullPolicy: Always
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/bash
+              - -c
+              - |
+                (
+                  if [ "$(ls -A /home/tigergraph/tigergraph/data/|grep -v lost|tail -1)" ]; then
+                    for i in $(seq 1 ${CLUSTER_SIZE});
+                    do
+                      until nslookup ${POD_PREFIX}-$((i-1)).${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local;
+                      do
+                        echo "wait dns to be updated";
+                        sleep 1;
+                      done;
+                    done;
+                    sleep 15;
+                    export PATH=/home/tigergraph/tigergraph/app/cmd:$PATH
+                    ln -sf /home/tigergraph/tigergraph/data/configs/tg.cfg /home/tigergraph/.tg.cfg
+                    grun all "hostname"
+                    echo "starting service at $(date)"
+                    gadmin start all --with-config /home/tigergraph/.tg.cfg;
+                  else
+                    sudo chown -R tigergraph:tigergraph /home/tigergraph/tigergraph/data;
+                    tg_cfg=$(find /home/tigergraph/tigergraph/app/ -name .tg.cfg|head -n 1)
+                    ln -sf $tg_cfg .tg.cfg
+                  fi
+                ) > /tmp/init.log 2>&1 &
+                disown -a
+                exit 0
+        name: tigergraph
+        ports:
+        - containerPort: 9000
+          name: rest
+        - containerPort: 14240
+          name: graphstudio
+        - containerPort: 22
+          name: ssh
+        resources:
+          requests:
+            cpu: 6000m
+            memory: 16Gi
+        volumeMounts:
+        - mountPath: /home/tigergraph/tigergraph/data
+          name: tg-data
+        - mountPath: /tmp/init_tg_cfg
+          name: config-volume
+          subPath: init_tg_cfg
+      imagePullSecrets:
+      - name: regcred
+      volumes:
+      - configMap:
+          items:
+          - key: init_tg_cfg
+            path: init_tg_cfg
+          name: tg-config
+        name: config-volume
+  volumeClaimTemplates:
+  - metadata:
+      labels:
+        app: tigergraph
+      name: tg-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 250Gi
+      storageClassName: managed-premium
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: guiserver-labeler
+  namespace: default
+spec:
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - command:
+            - /bin/bash
+            - -c
+            - |
+              # Get all hosts
+              allhosts_str=$(kubectl get pods -l app=tigergraph -ojson | jq -c '.items | map(. | .metadata) | map(. | .name)');
+              IFS=',' read -ra allhosts_raw <<< "$allhosts_str";
+              allhosts=()
+              for i in "${allhosts_raw[@]}"; do
+                if [[ $i =~ (tigergraph-[0-9]+) ]]
+                then
+                  hostname=${BASH_REMATCH[1]};
+                 allhosts+=($hostname)
+                fi
+              done;
+              # Get hosts running GUI server
+              guihosts_str=$(kubectl exec -it tigergraph-0 -- /bin/sh -c "/home/tigergraph/tigergraph/app/cmd/gadmin config get GUI.BasicConfig.Nodes  --file ~/.tg.cfg | jq -c 'map(. | .HostID)'");
+              IFS=',' read -ra guihosts_raw <<< "$guihosts_str";
+              guihosts=()
+              for i in "${guihosts_raw[@]}"; do
+                if [[ $i =~ m([0-9]+) ]]
+                then
+                  hostid=${BASH_REMATCH[1]};
+                  hostname="tigergraph-"$((hostid-1));
+                  kubectl label pods $hostname guiserver=running --overwrite;
+                  guihosts+=($hostname)
+                fi
+              done;
+              # Calculate diff and remove flag on these nodes
+              diff=(`echo ${allhosts[@]} ${guihosts[@]} | tr ' ' '\n' | sort | uniq -u `)
+              for i in "${diff[@]}"; do
+                kubectl label pods $i guiserver-;
+              done;
+            image: docker.tigergraph.com/tigergraph-k8s-installer:3.4.0
+            imagePullPolicy: Always
+            name: guiserver-labeler
+          initContainers:
+          - command:
+            - /bin/sh
+            - -c
+            - |
+              kubectl wait --for=condition=complete --timeout=6h job/installer || exit 0
+            image: docker.tigergraph.com/tigergraph-k8s-installer:3.4.0
+            imagePullPolicy: IfNotPresent
+            name: init-guiserver-labeler
+          restartPolicy: OnFailure
+          serviceAccountName: tigergraph-installer
+  schedule: '*/1 * * * *'
+  successfulJobsHistoryLimit: 1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: tigergraph
+  name: installer
+  namespace: default
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: tigergraph
+    spec:
+      containers:
+      - command:
+        - /bin/sh
+        - -c
+        - |
+          set -e;
+          export SSHPASS='tigergraph';
+          sshpass -e ssh -o StrictHostKeyChecking=no tigergraph@${POD_PREFIX}-0.${SERVICE_NAME}.${NAMESPACE} "
+            if [[ ! -f /home/tigergraph/tigergraph/data/installation_flag ]] && [[ \$(ls -A /home/tigergraph/tigergraph/data/|grep -v lost|tail -1) ]]; then
+              echo 'found lagacy data, skip installation'
+            else
+              touch /home/tigergraph/tigergraph/data/installation_flag;
+              export PATH=/home/tigergraph/tigergraph/app/cmd:$PATH;
+              cp /tmp/init_tg_cfg /tmp/tg_cfg;
+              sed -i 's/\=/\: /g' /tmp/tg_cfg;
+              echo >> /tmp/tg_cfg;
+              jq -j '.System | \"System.AppRoot: \",.AppRoot' ~/.tg.cfg >> /tmp/tg_cfg;
+              echo >> /tmp/tg_cfg;
+              if [[ -z \"$LICENSE\" ]]; then
+                jq -j '.System | \"System.License: \",.License' ~/.tg.cfg >> /tmp/tg_cfg;
+              else
+                echo \"System.License: ${LICENSE}\" >> /tmp/tg_cfg;
+              fi;
+              gadmin config init -i /tmp/tg_cfg --file /tmp/tg.cfg --ha ${HA};
+              cp --remove-destination /tmp/tg.cfg ~/.tg.cfg;
+              gadmin init cluster -y --skip-stop;
+              rm /home/tigergraph/tigergraph/data/installation_flag;
+            fi
+          ";
+        env:
+        - name: LICENSE
+          valueFrom:
+            configMapKeyRef:
+              key: license
+              name: env-config
+        - name: HA
+          valueFrom:
+            configMapKeyRef:
+              key: ha
+              name: env-config
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              key: service.headless.name
+              name: env-config
+        - name: POD_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              key: pod.prefix
+              name: env-config
+        - name: NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              key: namespace
+              name: env-config
+        image: docker.tigergraph.com/tigergraph-k8s-installer:3.4.0
+        name: cluster-installer
+      initContainers:
+      - command:
+        - /bin/sh
+        - -c
+        - |
+          set -e; for i in $(seq 1 ${CLUSTER_SIZE}); do
+
+            until nslookup ${POD_PREFIX}-$((i-1)).${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local;
+            do
+              echo waiting for tigergraph;
+              sleep 1;
+            done;
+          done; sleep 15;
+        env:
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              key: service.headless.name
+              name: env-config
+        - name: POD_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              key: pod.prefix
+              name: env-config
+        - name: NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              key: namespace
+              name: env-config
+        - name: CLUSTER_SIZE
+          valueFrom:
+            configMapKeyRef:
+              key: cluster_size
+              name: env-config
+        image: alpine:3.14
+        name: init-tigergraph
+      restartPolicy: OnFailure
+  ttlSecondsAfterFinished: 60

@@ -1,0 +1,44 @@
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapshotcontent-INSTANCENAME
+spec:
+  deletionPolicy: "Delete"
+  driver: "disk.csi.azure.com"
+  volumeSnapshotClassName: "csi-azuredisk-vsc"
+  source:
+    snapshotHandle: TARGETSNAPSHOT
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: snapshot-INSTANCENAME
+    namespace: default
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: snapshot-INSTANCENAME
+  namespace: default
+spec:
+  volumeSnapshotClassName: "csi-azuredisk-vsc"
+  source:
+    volumeSnapshotContentName: snapshotcontent-INSTANCENAME
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: tigergraph
+  name: INSTANCENAME
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: managed-premium
+  resources:
+    requests:
+      storage: 250Gi
+  dataSource:
+    name: snapshot-INSTANCENAME
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
