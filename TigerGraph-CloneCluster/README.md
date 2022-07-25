@@ -36,12 +36,9 @@ J -- loop --> K(Get the source snapshot Id) --> L(Create target snapshot<br/> us
 J -- Step 4--> O(pvc-restore-from-snapshot.yaml <br/> file created) -->P{i <= number<br/> of nodes} --> Q(Check if the snapshot<br/> has been created) -- No --> R(Sleep for 10 seconds) -- check <br/>again--> Q
 Q -- Yes --> P
 P -- Step 5--> T(Execute <br/>'pvc-restore-from-snapshot.yaml' using <br/>kubectl command)   --> U(Execute <br/>'template/tigergraph-aks-default.yaml' using <br/>kubectl command) --> V(Stop)
-linkStyle 2 stroke-width:5px,fill:red,stroke:red;color:#fff
-linkStyle 5 stroke-width:5px,stroke:red;color:#fff
-linkStyle 11 stroke-width:5px,stroke:red;color:#fff
-linkStyle 16 stroke-width:5px,stroke:red;color:#fff
-linkStyle 22 stroke-width:5px,stroke:red;color:#fff
-```
-
-
+linkStyle 2 stroke-width:5px,fill:red,stroke:red;
+linkStyle 5 stroke-width:5px,stroke:red;
+linkStyle 11 stroke-width:5px,stroke:red;
+linkStyle 16 stroke-width:5px,stroke:red;
+linkStyle 22 stroke-width:5px,stroke:red;
 ```
