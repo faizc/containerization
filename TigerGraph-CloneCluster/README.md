@@ -20,28 +20,28 @@ usage: ./copysnapshot.sh
 
 
 
-## UML diagrams
+## Execution Flow 
 
-You can render UML diagrams using [Mermaid](https://mermaidjs.github.io/). For example, this will produce a sequence diagram:
 
 ```mermaid
-sequenceDiagram
-Alice ->> Bob: Hello Bob, how are you?
-Bob-->>John: How about you John?
-Bob--x Alice: I am good thanks!
-Bob-x John: I am good thanks!
-Note right of John: Bob thinks a long<br/>long time, so long<br/>that the text does<br/>not fit on a row.
-
-Bob-->Alice: Checking with John...
-Alice->John: Yes... John, how are you?
+graph TD
+A[Start] -- Delete old yaml files --> B(Clean up)
+B -- Create blank yaml files --> C(Files created)
+C -- Step 1 --> D{i <= number<br/> of nodes} -- copy --> E(copy 'template/volumesnapshot.yaml' <br/>to 'pvc-snapshot.yaml') -- continue --> D
+D -- Step 2 --> F(Execute the  'pvc-snapshot.yaml' <br/>using kubectl apply command -<br/> Create PVC snapshot for existing cluster)
+F  --> G{i <= number<br/> of nodes} -- check--> H(Check if the snapshot<br/> has been created) -- No --> I(Sleep for 30 seconds) -- check <br/>again--> H
+H -- Yes --> G
+G -- Step 3 --> J{i <= number<br/> of nodes} 
+J -- loop --> K(Get the source snapshot Id) --> L(Create target snapshot<br/> using source snapshot id) --> M(copy 'template/restorevolumesnapshot.yaml'<br/> to 'pvc-restore-from-snapshot.yaml') -- repeat --> J
+J -- Step 4--> O(pvc-restore-from-snapshot.yaml <br/> file created) -->P{i <= number<br/> of nodes} --> Q(Check if the snapshot<br/> has been created) -- No --> R(Sleep for 10 seconds) -- check <br/>again--> Q
+Q -- Yes --> P
+P -- Step 5--> T(Execute <br/>'pvc-restore-from-snapshot.yaml' using <br/>kubectl command)   --> U(Execute <br/>'template/tigergraph-aks-default.yaml' using <br/>kubectl command) --> V(Stop)
+linkStyle 2 stroke-width:5px,fill:red,stroke:red;color:#fff
+linkStyle 5 stroke-width:5px,stroke:red;color:#fff
+linkStyle 11 stroke-width:5px,stroke:red;color:#fff
+linkStyle 16 stroke-width:5px,stroke:red;color:#fff
+linkStyle 22 stroke-width:5px,stroke:red;color:#fff
 ```
 
-And this will produce a flow chart:
 
-```mermaid
-graph LR
-A[Square Rect] -- Link text --> B((Circle))
-A --> C(Round Rect)
-B --> D{Rhombus}
-C --> D
 ```
